@@ -165,7 +165,7 @@ def developers():
 
 @app.route('/login', methods=['POST', 'GET'])
 def login():
-    database = {'Vignan': '@Vp1974!'}
+    database = {'UserName': 'PassWord'}
     if request.method == 'POST':
         name1 = request.form['uname']
         pwd = request.form['psw']
