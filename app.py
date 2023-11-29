@@ -1,8 +1,8 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, session
+from flask import Flask, render_template, request, redirect, url_for, flash, session, g
 import sqlite3
-from flask import  g
 from flask_login import LoginManager, UserMixin, login_required, login_user, logout_user, current_user
 from base64 import b64encode
+import os
 from datetime import timedelta
 
 app = Flask(__name__, static_url_path='/static', static_folder='static')
@@ -23,9 +23,10 @@ class User(UserMixin):
         self.id = id
         self.name = "user" + str(id)
         self.password = self.name + "_secret"
-        
     def __repr__(self):
         return "%d/%s/%s" % (self.id, self.name, self.password)
+    def is_logged():
+        return True
 
 def add_entry(name, classNum, FatherName, MotherName, Address, Mobile, AdharNum):
     con = sqlite3.connect("Vignan.db")
@@ -101,6 +102,17 @@ def get_image(tableName):
         con.close()
     return images
        
+def get_video(tableName):
+    con = sqlite3.connect("Vignan.db")
+    c = con.cursor()
+    try:
+        records = c.execute("SELECT * FROM " + "V" + str(tableName)).fetchall()
+    finally:
+        con.commit()
+        c.close()
+        con.close()
+    return records
+
 def get_events():
     con = sqlite3.connect("Vignan.db")
     c = con.cursor()
@@ -111,16 +123,6 @@ def get_events():
         c.close()
         con.close()
     return records
-
-class event_login:
-    login = False
-    def user_in(self):
-        self.login = True
-    def user_out(self):
-        self.login = False
-    def get_user(self):
-        return self.login
-elogin = event_login()
 
 @app.route('/')
 @app.route('/home')
@@ -141,8 +143,9 @@ def gallery():
     galleryContent = []
     for event in events:
         images = get_image(event[0])
-        galleryContent.append([event[0], event[1], images])
-    return render_template("Gallery.html", login=elogin.get_user(), galleryContent=galleryContent)
+        videos = get_video(event[0])
+        galleryContent.append([event[0], event[1], images, videos])
+    return render_template("Gallery.html", galleryContent=galleryContent)
 
 @app.route('/donations')
 def donations():
@@ -150,10 +153,10 @@ def donations():
 
 @app.route('/admissions')
 def admissions():
-    if elogin.get_user():
+    if current_user.is_authenticated:
         records, columns = get_entry()
-        return render_template("Admissions.html", columns=columns, records=records, login=True)
-    return render_template('Admissions.html', login=False)
+        return render_template("Admissions.html", columns=columns, records=records)
+    return render_template('Admissions.html')
 
 @app.route('/contact')
 def contact():
@@ -165,7 +168,7 @@ def developers():
 
 @app.route('/login', methods=['POST', 'GET'])
 def login():
-    database = {'UserName': 'PassWord'}
+    database = {'Vignan': '@Vp1974!'} #
     if request.method == 'POST':
         name1 = request.form['uname']
         pwd = request.form['psw']
@@ -175,7 +178,6 @@ def login():
             else:
                 user = User(name1)
                 login_user(user)
-                elogin.user_in()
                 return redirect(url_for('admissions'))
         else:
             return render_template('Admissions.html', info='Invalid User')
@@ -249,6 +251,24 @@ def addImage(IDT):
             con.close()
         return redirect(url_for('gallery'))
     return render_template("AddImage.html", IDT=IDT)
+
+@app.route("/addVideo/<IDT>", methods=['POST', 'GET'])
+@login_required
+def addVideo(IDT):
+    if request.method == 'POST':
+        video = request.files['video']
+        con = sqlite3.connect("Vignan.db")
+        c = con.cursor()
+        try:
+            insert = """INSERT INTO """ + "V" + str(IDT) + """ (VIDEO) VALUES (?);"""
+            c.execute(insert, (video.filename,))
+            video.save(os.path.join('static/videos', video.filename))
+        finally:
+            con.commit()
+            c.close()
+            con.close()
+        return redirect(url_for('gallery'))
+    return render_template("AddVideo.html", IDT=IDT)
     
 @app.route("/create", methods=['POST', 'GET'])
 @login_required
@@ -262,6 +282,7 @@ def create():
             c.execute(insert, (name,))
             idEvent = c.execute("SELECT MAX(ID) FROM Gallery").fetchall()
             c.execute("""CREATE TABLE '""" + "T" + str(idEvent[0][0]) + """' ("ID"	INTEGER, "IMAGE"	BLOB NOT NULL, PRIMARY KEY("ID" AUTOINCREMENT))""")
+            c.execute("""CREATE TABLE '""" + "V" + str(idEvent[0][0]) + """' ("ID"	INTEGER, "VIDEO"	TEXT NOT NULL  UNIQUE, PRIMARY KEY("ID" AUTOINCREMENT))""")
         finally:
             con.commit()
             c.close()
@@ -283,13 +304,37 @@ def delImage(IDT, imgDel):
         con.close()
     return redirect(url_for("gallery"))
 
-@app.route("/delImage/<IDT>", methods=['POST', 'GET'])
+@app.route("/delVideo/<IDT>/<videoDel>", methods=['POST', 'GET'])
+@login_required
+def delVideo(IDT, videoDel):
+    con = sqlite3.connect("Vignan.db")
+    c = con.cursor()
+    try:
+        getVideo = "SELECT VIDEO FROM V" + str(IDT) + " WHERE ID = ?";
+        record = c.execute(getVideo, (videoDel,)).fetchall()
+        videoName = record[0][0]
+        delete = "DELETE FROM " + "V" + str(IDT) + " WHERE ID = ?;"
+        os.remove("static/videos/" + videoName)
+        c.execute(delete, (videoDel,))
+    finally:
+        con.commit()
+        c.close()
+        con.close()
+    return redirect(url_for("gallery"))
+
+@app.route("/delEvent/<IDT>", methods=['POST', 'GET'])
 @login_required
 def delEvent(IDT):
     con = sqlite3.connect("Vignan.db")
     c = con.cursor()
     try:
         delete = "Drop Table " + "T" + str(IDT) + " ;"
+        c.execute(delete)
+        getVideo = "SELECT VIDEO FROM V" + str(IDT);
+        record = c.execute(getVideo).fetchall()
+        for video in record:
+            os.remove("static/videos/" + video[0])
+        delete = "Drop Table " + "V" + str(IDT) + " ;"
         c.execute(delete)
         delete = "DELETE FROM Gallery WHERE ID = ?;"
         c.execute(delete, (IDT,))
@@ -302,7 +347,6 @@ def delEvent(IDT):
 @app.route('/logout')
 def logout():
     logout_user()
-    elogin.user_out()
     return redirect(url_for('admissions'))
 
 @login_manager.user_loader
